@@ -1207,7 +1207,8 @@ class HeaderBar(Static):
         if today["by_model"]:
             t.append("    ")
             for mk, toks in sorted(today["by_model"].items(), key=lambda x: -x[1])[:3]:
-                short = MODEL_SHORT.get(mk, mk.split("-")[1])
+                parts = mk.split("-")
+                short = MODEL_SHORT.get(mk, parts[1] if len(parts) > 1 else mk)
                 t.append(f"{short}:{fmt_k(toks)}  ", style="dim cyan")
 
         self.update(t)
@@ -1359,7 +1360,8 @@ class StatsPanel(Static):
 
         if today["by_model"]:
             for m, toks in sorted(today["by_model"].items(), key=lambda x: -x[1])[:3]:
-                short = MODEL_SHORT.get(m, m.split("-")[1])
+                parts = m.split("-")
+                short = MODEL_SHORT.get(m, parts[1] if len(parts) > 1 else m)
                 t.append(f"  {short:<10}", style="cyan")
                 t.append(f" {fmt_k(toks)}\n", style="white")
 
