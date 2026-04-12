@@ -1,0 +1,12 @@
+[Unit]
+Description=Run tb-reaper hourly
+Requires=tb-reaper.service
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

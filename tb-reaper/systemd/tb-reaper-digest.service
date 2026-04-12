@@ -1,0 +1,10 @@
+[Unit]
+Description=tb-reaper — weekly Telegram digest of reaped sessions
+After=default.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/tb-reaper-digest
+
+[Install]
+WantedBy=default.target

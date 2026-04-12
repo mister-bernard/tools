@@ -1,0 +1,14 @@
+[Unit]
+Description=tb-reaper — cooperative idle Claude session reaper
+After=default.target
+
+[Service]
+Type=oneshot
+Environment=TB_REAPER_IDLE_HOURS=6
+Environment=TB_REAPER_MIN_MEM_MB=300
+Environment=TB_REAPER_GRACE_SECS=120
+ExecStart=%h/.local/bin/tb-reaper
+Nice=10
+
+[Install]
+WantedBy=default.target

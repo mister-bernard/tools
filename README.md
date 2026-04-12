@@ -10,6 +10,7 @@ A book club for CLI tools. Bring your own, take what you need.
 | **[anthropic-usage](anthropic-usage/)** | Scrape real Claude usage percentages from claude.ai — session %, weekly limits, reset times | Node.js |
 | **[cleanup-backups](cleanup-backups/)** | Remove stale `.bak.*` files with configurable retention and dry-run mode | Bash |
 | **[ig-download](ig-download/)** | Download Instagram Reels and Posts via yt-dlp with cookie fallback | Bash |
+| **[tb-reaper](tb-reaper/)** | Cooperative idle-session reaper for Claude Code — negotiates shutdown before killing long-idle sessions | Python |
 
 ## Quick start
 
@@ -80,6 +81,13 @@ tools/
     README.md
   ig-download/           # Instagram downloader
     ig-download.sh
+    README.md
+  tb-reaper/             # Idle Claude session reaper
+    reaper.py
+    digest.py
+    install.sh
+    hooks/
+    systemd/
     README.md
   docs/                  # GitHub Pages site
     index.html
