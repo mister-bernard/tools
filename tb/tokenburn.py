@@ -384,6 +384,14 @@ class TokenData:
                         "msg": f"Session {sp}% with {sr:.0f}m left — "
                                f"{headroom}% available, spin up more work!"})
 
+        # Session just reset but actively burning (Anthropic lags behind JSONL)
+        if sp == 0 and sr and sr > 240:
+            live_5h = self._live_5h_total()
+            if live_5h > 50_000:
+                ads.append({"level": "info",
+                            "msg": f"Session just reset — {fmt_k(live_5h)} tokens "
+                                   f"burning, Anthropic will catch up"})
+
         # ── Weekly balance alerts ──────────────────────────
         if wr is not None and wr > 0:
             days_left    = wr / (60 * 24)
@@ -398,14 +406,14 @@ class TokenData:
                 ads.append({"level": "warn",
                             "msg": f"Weekly {wp}% — target ~{ideal_daily:.0f}%/day "
                                    f"over {days_left:.1f}d remaining"})
-            elif wp < 40 and days_left < 4:
+            elif wp < 50 and days_left < 5:
                 ads.append({"level": "action",
-                            "msg": f"Weekly only {wp}% with {days_left:.1f}d left — "
+                            "msg": f"Weekly {wp}% with {days_left:.1f}d left — "
                                    f"burn ~{ideal_daily:.0f}%/day to use allocation"})
-            elif wp < 20 and days_left < 5:
-                ads.append({"level": "action",
-                            "msg": f"Weekly {wp}% — lots of headroom, "
-                                   f"ramp up to ~{ideal_daily:.0f}%/day"})
+            elif wp < 30 and days_left < 6:
+                ads.append({"level": "info",
+                            "msg": f"Weekly {wp}% — headroom available, "
+                                   f"target ~{ideal_daily:.0f}%/day"})
 
             # Pace check
             if current_pace is not None:
@@ -580,10 +588,19 @@ class TokenData:
 
     def burn_rate_per_min(self, window_mins: int = 15) -> float:
         """
-        Compute burn rate from snapshot deltas when stats-cache is fresh,
-        else estimate from live 5h total / elapsed session time.
+        Compute burn rate. Prefers JSONL-based calculation (always live),
+        with snapshot delta as secondary when stats-cache is actively updating.
         """
-        # Try snapshot-based first
+        # Primary: live JSONL — total 5h tokens / session age
+        sessions = self.active_sessions()
+        if sessions:
+            total_5h = sum(s["toks_5h"] for s in sessions)
+            if total_5h > 0:
+                max_age_mins = min(300.0, max(s["age_secs"] for s in sessions) / 60.0)
+                if max_age_mins > 1:
+                    return total_5h / max_age_mins
+
+        # Secondary: snapshot deltas (only useful when stats-cache is fresh)
         snaps  = self.snapshots()
         cutoff = time.time() - window_mins * 60
         recent = [s for s in snaps if s["ts"] >= cutoff]
@@ -593,16 +610,7 @@ class TokenData:
             if dt > 0.05 and delta > 0:
                 return delta / dt
 
-        # Fallback: live JSONL — total 5h tokens / avg session age (capped at 5h)
-        sessions = self.active_sessions()
-        if not sessions:
-            return 0.0
-        total_5h = sum(s["toks_5h"] for s in sessions)
-        if total_5h == 0:
-            return 0.0
-        # Use the oldest active session's age (capped to 5h) as the time window
-        max_age_mins = min(300.0, max(s["age_secs"] for s in sessions) / 60.0)
-        return total_5h / max_age_mins if max_age_mins > 1 else 0.0
+        return 0.0
 
     def burn_pct_per_10min(self) -> float:
         """% of 5h window burned per 10 minutes, using Anthropic data when available."""
@@ -613,9 +621,10 @@ class TokenData:
             sr_mins  = prof["session_reset_mins"]
             elapsed  = 300.0 - sr_mins  # 5h window = 300 min
             pct_used = prof["session_pct"]
-            if elapsed > 1:
+            # Only use Anthropic-derived rate when we have meaningful % data
+            if elapsed > 1 and pct_used > 0:
                 return (pct_used / elapsed) * 10
-        # Fallback to token rate
+        # Fallback to token-based rate (works when Anthropic session is 0% / just reset)
         limit = self.window_limit(5)
         return safe_div(self.burn_rate_per_min() * 10, limit) * 100 if limit else 0.0
 
@@ -626,8 +635,17 @@ class TokenData:
             pct = prof["session_pct"]
         else:
             pct = self.window_pct(5)
-        rate = self.burn_pct_per_10min() / 10  # pct/min
-        return max(1, int((100.0 - pct) / rate)) if rate > 0 and pct < 100 else None
+        rate_pct = self.burn_pct_per_10min() / 10  # pct/min
+        if rate_pct > 0 and pct < 100:
+            return max(1, int((100.0 - pct) / rate_pct))
+        # Fallback: token-based projection against window limit
+        tok_rate = self.burn_rate_per_min()
+        limit    = self.window_limit(5)
+        if tok_rate > 0 and limit > 0:
+            live_5h  = self._live_5h_total()
+            remaining = max(0, limit - live_5h)
+            return max(1, int(remaining / tok_rate)) if remaining > 0 else None
+        return None
 
     def target_burn_pct(self) -> float:
         return float(self._acct.get("target_pct_5h", 70))
@@ -1071,10 +1089,18 @@ class TokenData:
         sessions = self.active_sessions()
         rate     = self.burn_rate_per_min()
 
-        # Use Anthropic session pct for burn score
+        # Use Anthropic session pct for burn score, with JSONL fallback
         au   = self.anthropic_usage()
         prof = au.get("profiles", {}).get("default")
         pct5 = prof["session_pct"] if prof else self.window_pct(5)
+
+        # When Anthropic session is 0% (just reset) but we're actively burning,
+        # estimate burn from token rate against window limit
+        if pct5 == 0 and rate > 0:
+            limit = self.window_limit(5)
+            if limit > 0:
+                live_5h = self._live_5h_total()
+                pct5 = min(100.0, (live_5h / limit) * 100)
 
         # Ship score: use live 5h JSONL tokens since stats-cache may be stale
         live_5h  = self._live_5h_total()
@@ -1234,7 +1260,10 @@ class BurndownPanel(Static):
             lim_str = f" {lim_pct:.1f}%" if limit else ""
             t.append(f"  {fmt_k(val)}{lim_str}\n", style="dim white")
 
-        pct5  = data.window_pct(5)
+        # Use Anthropic session pct (preferred) or fallback
+        au   = data.anthropic_usage()
+        prof = au.get("profiles", {}).get("default")
+        pct5 = prof["session_pct"] if prof else data.window_pct(5)
         rate  = data.burn_rate_per_min()
         p10   = data.burn_pct_per_10min()
         mins  = data.mins_until_full()
