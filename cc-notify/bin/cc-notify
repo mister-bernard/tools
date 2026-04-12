@@ -1,0 +1,154 @@
+#!/bin/bash
+# cc-notify — desktop notifications for Claude Code via ntfy.sh
+#
+# Claude Code's built-in tab-title signalling doesn't escape tmux / mosh /
+# remote-session wrappers cleanly, and terminal-based notification escapes
+# (OSC 9) are silently dropped by mosh. This script pushes an HTTP
+# notification to an ntfy.sh topic the user subscribes to on their
+# laptop/phone — it works regardless of how many hops sit between Claude
+# and the screen.
+#
+# Invocation (from ~/.claude/settings.json hooks):
+#   cc-notify <title-prefix> <message>
+# Example:
+#   cc-notify "Claude Code" "task finished"
+#
+# Config (checked in order):
+#   1. $CC_NOTIFY_NTFY_TOPIC env var
+#   2. ~/.config/cc-notify/config         (file of KEY=VALUE lines)
+# If no topic is found, exits silently.
+#
+# Session labelling (first non-empty wins):
+#   1. tmux pane_title for this Claude's pane — this is the auto-generated
+#      topic Claude Code sets via OSC title, e.g. "Add notifications to CLI"
+#   2. "name" field of the matching ~/.claude/sessions/<pid>.json
+#      (set by /rename)
+#   3. basename of the session cwd
+#
+# Teammate spawns (entrypoint="sdk-cli") are suppressed so only the
+# orchestrator fires notifications — subagents and team-member panes
+# stay silent.
+
+set -u
+
+LOG="${CC_NOTIFY_LOG:-$HOME/.cache/cc-notify.log}"
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+
+CC_NOTIFY_CONFIG="${CC_NOTIFY_CONFIG:-$HOME/.config/cc-notify/config}"
+if [ -z "${CC_NOTIFY_NTFY_TOPIC:-}" ] && [ -r "$CC_NOTIFY_CONFIG" ]; then
+  # shellcheck disable=SC1090
+  . "$CC_NOTIFY_CONFIG"
+fi
+NTFY_TOPIC="${CC_NOTIFY_NTFY_TOPIC:-}"
+NTFY_SERVER="${CC_NOTIFY_NTFY_SERVER:-https://ntfy.sh}"
+PRIORITY="${CC_NOTIFY_PRIORITY:-default}"
+
+if [ -z "$NTFY_TOPIC" ]; then
+  echo "$(date -Iseconds) no topic configured — skipping" >> "$LOG"
+  exit 0
+fi
+
+TITLE_PREFIX="${1:-Claude Code}"
+MSG="${2:-done}"
+
+# Slurp hook JSON from stdin (non-blocking, short timeout).
+HOOK_JSON=""
+if [ ! -t 0 ]; then
+  HOOK_JSON=$(timeout 1 cat 2>/dev/null || true)
+fi
+
+# Walk ancestors to find the pts/N the claude process owns.
+pid=$PPID
+tty_dev=""
+for _ in 1 2 3 4 5 6 7 8; do
+  [ -z "$pid" ] && break
+  t=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
+  case "$t" in
+    pts/*|tty*)
+      tty_dev="/dev/$t"
+      break
+      ;;
+  esac
+  pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+done
+
+# If inside tmux, ask for this pane's title — it's what Claude Code has
+# set via OSC and is usually the most meaningful label.
+PANE_TITLE=""
+if [ -n "$tty_dev" ] && command -v tmux >/dev/null 2>&1; then
+  PANE_TITLE=$(tmux list-panes -a -F '#{pane_tty}|#{pane_title}' 2>/dev/null \
+    | awk -F'|' -v t="$tty_dev" '$1 == t { $1=""; sub(/^\|/,""); print; exit }')
+  # Strip leading status glyph + whitespace (e.g. "✳ ", "⠐ ")
+  PANE_TITLE=$(echo "$PANE_TITLE" | sed -E 's/^[^A-Za-z0-9]+//' | awk '{$1=$1; print}')
+  # Discard the generic default — not helpful as a label.
+  [ "$PANE_TITLE" = "Claude Code" ] && PANE_TITLE=""
+fi
+
+# Consult the session's metadata file to learn about /rename + teammate
+# flag, and to get a cwd fallback.
+export HOOK_JSON PANE_TITLE
+read -r SESSION_LABEL SKIP <<<"$(python3 - <<'PY' 2>/dev/null
+import json, os, glob
+
+hook = {}
+try:
+    hook = json.loads(os.environ.get("HOOK_JSON", "") or "{}")
+except Exception:
+    pass
+
+session_id = hook.get("session_id") or ""
+cwd_hint = hook.get("cwd") or ""
+pane_title = (os.environ.get("PANE_TITLE") or "").strip()
+
+skip = "0"
+renamed = ""
+cwd = cwd_hint
+
+if session_id:
+    for path in glob.glob(os.path.expanduser("~/.claude/sessions/*.json")):
+        try:
+            d = json.load(open(path))
+        except Exception:
+            continue
+        if d.get("sessionId") != session_id:
+            continue
+        if d.get("entrypoint") == "sdk-cli":
+            skip = "1"
+        renamed = (d.get("name") or "").strip()
+        cwd = d.get("cwd") or cwd
+        break
+
+label = pane_title or renamed or (os.path.basename(cwd.rstrip("/")) if cwd else "")
+label = label.replace("\n", " ").strip() or "-"
+print(label.replace(" ", "_"), skip)
+PY
+)"
+SESSION_LABEL="${SESSION_LABEL//_/ }"
+[ "$SESSION_LABEL" = "-" ] && SESSION_LABEL=""
+
+{
+  echo "---- $(date -Iseconds) ----"
+  echo "tty=$tty_dev pane_title='$PANE_TITLE' label='$SESSION_LABEL' skip=$SKIP"
+
+  if [ "$SKIP" = "1" ]; then
+    echo "teammate/sdk-cli session — skipping"
+    exit 0
+  fi
+
+  if [ -n "$SESSION_LABEL" ]; then
+    FULL_TITLE="$SESSION_LABEL"
+  else
+    FULL_TITLE="$TITLE_PREFIX"
+  fi
+
+  curl -sS --max-time 5 \
+    -H "Title: $FULL_TITLE" \
+    -H "Priority: $PRIORITY" \
+    -H "Tags: robot" \
+    -d "$MSG" \
+    "$NTFY_SERVER/$NTFY_TOPIC"
+  echo
+  echo "exit=$?"
+} >> "$LOG" 2>&1
+
+exit 0

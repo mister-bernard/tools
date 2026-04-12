@@ -11,6 +11,7 @@ A book club for CLI tools. Bring your own, take what you need.
 | **[cleanup-backups](cleanup-backups/)** | Remove stale `.bak.*` files with configurable retention and dry-run mode | Bash |
 | **[ig-download](ig-download/)** | Download Instagram Reels and Posts via yt-dlp with cookie fallback | Bash |
 | **[tb-reaper](tb-reaper/)** | Cooperative idle-session reaper for Claude Code — negotiates shutdown before killing long-idle sessions | Python |
+| **[cc-notify](cc-notify/)** | Desktop notifications for Claude Code via ntfy.sh — survives tmux, mosh, SSH; shows the session topic as the title | Bash |
 
 ## Quick start
 
