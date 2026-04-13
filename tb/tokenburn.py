@@ -441,6 +441,46 @@ class TokenData:
             ads.append({"level": "info",
                         "msg": "Single session, low usage — spin up parallel work"})
 
+        # ── Subscription upgrade advisor ───────────────────
+        # Fire only when genuinely constrained — not noisy status updates.
+        # Conditions that indicate a second Pro Max account would help:
+        #   A) Session is critically full AND can't coast to reset
+        #      (sp >= 88 AND sr > 75min — stuck for >75 min with no headroom)
+        #   B) Weekly nearly exhausted AND still >3 days left in the week
+        #      (wp >= 80 AND days_left >= 3 AND burning faster than ideal)
+        #   C) Both session AND weekly are heavily loaded simultaneously
+        #      (sp >= 70 AND wp >= 70)
+        # Guard: only emit one upgrade advisory per call; prefer the
+        # highest-signal condition.
+        upgrade_msg: Optional[str] = None
+
+        # Condition A — session stuck at ceiling with substantial time remaining
+        if sp >= 88 and sr is not None and sr > 75:
+            hrs_left = sr / 60.0
+            upgrade_msg = (
+                f"Session at {sp}% with {hrs_left:.1f}h until reset — "
+                f"a second Pro Max account would let you keep going now"
+            )
+
+        # Condition B — weekly nearly gone, week not nearly over
+        if upgrade_msg is None and wp >= 80 and wr is not None:
+            days_left = wr / (60 * 24)
+            if days_left >= 3:
+                upgrade_msg = (
+                    f"Weekly at {wp}% with {days_left:.1f}d remaining — "
+                    f"second account would carry the overflow"
+                )
+
+        # Condition C — both ceilings closing in together
+        if upgrade_msg is None and sp >= 70 and wp >= 70:
+            upgrade_msg = (
+                f"Session {sp}% + weekly {wp}% both running hot — "
+                f"consider a second Pro Max account for parallel capacity"
+            )
+
+        if upgrade_msg:
+            ads.append({"level": "upgrade", "msg": upgrade_msg})
+
         self._cycle["advisories"] = ads
         return ads
 
@@ -714,24 +754,58 @@ class TokenData:
         ) for i in range(days - 1, -1, -1)]
 
     def burndown_slots(self, hours: int = 5) -> list[tuple[str, int]]:
-        snaps = self.snapshots()
-        now   = time.time()
+        """
+        Return per-hour token buckets for the past `hours` hours.
+        Scans JSONL files directly — does not rely on stats-cache.json
+        (which goes stale) or snapshot deltas (which break when the
+        stats-cache grand total is frozen).
+        """
+        now    = time.time()
+        cutoff = now - hours * 3600
+        buckets: dict[int, int] = {h: 0 for h in range(hours)}
+
+        for jsonl_path in PROJECTS_DIR.glob("**/*.jsonl"):
+            try:
+                if jsonl_path.stat().st_mtime < cutoff - 60:
+                    continue
+                with open(jsonl_path, encoding="utf-8", errors="replace") as fh:
+                    for raw in fh:
+                        raw = raw.strip()
+                        if not raw:
+                            continue
+                        try:
+                            entry = json.loads(raw)
+                        except Exception:
+                            continue
+                        if entry.get("type") != "assistant":
+                            continue
+                        ts_str = entry.get("timestamp", "")
+                        if not ts_str:
+                            continue
+                        try:
+                            ts = datetime.fromisoformat(
+                                ts_str.replace("Z", "+00:00")).timestamp()
+                        except Exception:
+                            continue
+                        if ts < cutoff:
+                            continue
+                        usage = entry.get("message", {}).get("usage", {})
+                        toks  = (int(usage.get("input_tokens",  0)) +
+                                 int(usage.get("output_tokens", 0)))
+                        if not toks:
+                            continue
+                        age_hrs  = (now - ts) / 3600.0
+                        bucket   = min(hours - 1, int(age_hrs))
+                        slot_idx = (hours - 1) - bucket
+                        buckets[slot_idx] += toks
+            except Exception:
+                continue
+
         slots = []
-        for h in range(hours - 1, -1, -1):
-            s_start = now - (h + 1) * 3600
-            s_end   = now - h * 3600
-            in_slot = [s for s in snaps if s_start <= s["ts"] < s_end]
-            before  = [s for s in snaps if s["ts"] < s_start]
-            if in_slot and before:
-                delta = in_slot[-1]["grand"] - before[-1]["grand"]
-            elif len(in_slot) >= 2:
-                delta = in_slot[-1]["grand"] - in_slot[0]["grand"]
-            elif in_slot and not before and len(snaps) >= 2:
-                delta = in_slot[-1]["grand"] - snaps[0]["grand"]
-            else:
-                delta = 0
-            slots.append((datetime.fromtimestamp(s_start).strftime("%H:%M"),
-                          max(0, delta)))
+        for h in range(hours):
+            s_start = now - (hours - h) * 3600
+            label   = datetime.fromtimestamp(s_start).strftime("%H:%M")
+            slots.append((label, buckets[h]))
         return slots
 
     # ── sessions + JSONL truth ─────────────────────────────
@@ -1531,16 +1605,18 @@ class AdvisoryPanel(Static):
     AdvisoryPanel.has-advice { display: block; }
     """
     LEVEL_STYLE = {
-        "urgent": "bold red",
-        "warn":   "bold yellow",
-        "action": "bold green",
-        "info":   "dim cyan",
+        "urgent":  "bold red",
+        "warn":    "bold yellow",
+        "action":  "bold green",
+        "info":    "dim cyan",
+        "upgrade": "bold magenta",
     }
     LEVEL_ICON = {
-        "urgent": "🔴",
-        "warn":   "🟡",
-        "action": "🟢",
-        "info":   "💡",
+        "urgent":  "🔴",
+        "warn":    "🟡",
+        "action":  "🟢",
+        "info":    "💡",
+        "upgrade": "➕",
     }
 
     def update_advisory(self, data: TokenData):
