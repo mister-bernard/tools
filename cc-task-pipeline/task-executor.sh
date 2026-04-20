@@ -133,12 +133,12 @@ for d in "${EXTRA_DIRS[@]}"; do
     ADD_DIR_ARGS+=(--add-dir "$d")
 done
 
+STATUS=0
 "$CLAUDE_BIN" \
     --print \
     --dangerously-skip-permissions \
     "${ADD_DIR_ARGS[@]}" \
     --max-budget-usd "$MAX_BUDGET" \
-    -p "$PROMPT" >> "$LOG" 2>&1
+    -p "$PROMPT" >> "$LOG" 2>&1 || STATUS=$?
 
-STATUS=$?
 log "Task $TASK_ID executor exit code: $STATUS"

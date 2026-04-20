@@ -45,12 +45,16 @@ cat <<EOF
 
 Cron suggestion (copy into \`crontab -e\`):
 
+    # Each script writes its own timestamped log inside \$pipeline_root.
+    # We drop cron stdout (would duplicate every line) and send stderr to a
+    # separate .err file so crash tracebacks are still captured.
+
     # hourly task generation from recent Claude Code sessions
-    23 * * * * cd $SCRIPT_DIR && python3 chat-activity-generator.py >/dev/null 2>&1
+    23 * * * * cd $SCRIPT_DIR && python3 chat-activity-generator.py >/dev/null 2>>$ROOT/chat-activity-generator.err
     # every 15 min: check /recommend, execute a queued task if safe
-    */15 * * * * cd $SCRIPT_DIR && python3 auto-executor.py >/dev/null 2>&1
+    */15 * * * * cd $SCRIPT_DIR && python3 auto-executor.py >/dev/null 2>>$ROOT/auto-executor.err
     # daily expiry sweep
-    0 8 * * * cd $SCRIPT_DIR && python3 taskrunner.py expire >/dev/null 2>&1
+    0 8 * * * cd $SCRIPT_DIR && python3 taskrunner.py expire >/dev/null 2>>$ROOT/taskrunner.err
 
 Quick commands:
 
