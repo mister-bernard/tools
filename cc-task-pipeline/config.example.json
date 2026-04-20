@@ -7,6 +7,7 @@
   "claude_bin": "claude",
   "llm_model": "claude-sonnet-4-6",
   "llm_budget_usd": 0.50,
+  "llm_timeout_sec": 300,
   "executor_budget_usd": 2.00,
   "executor_timeout_sec": 900,
 

@@ -49,6 +49,7 @@ RECOMMEND_URL = f"{CFG['tokenburn_url']}/recommend"
 CLAUDE_BIN = CFG["claude_bin"]
 LLM_MODEL = CFG["llm_model"]
 LLM_BUDGET = CFG.get("llm_budget_usd", 0.50)
+LLM_TIMEOUT_SEC = int(CFG.get("llm_timeout_sec", 300))
 
 GEN = CFG["generator"]
 LOOKBACK_MIN = GEN["lookback_min"]
@@ -87,16 +88,25 @@ def recommend_preflight() -> dict | None:
 
 
 def should_skip(rec: dict | None) -> tuple[bool, str]:
+    """Generator is permissive — one cheap LLM call per run.
+
+    Skips only on clear-halt signals or exhausted reserve. Tolerates
+    routing-layer actions (route_worker, switch) since a single extraction
+    run doesn't care which account ends up billed.
+    """
     if not rec:
         return False, "api-unreachable (run permissive)"
     action = rec.get("action")
-    if action in ("halt", "cool_down_all", "reduce", "unknown"):
+    SKIP = ("halt", "cool_down_all", "reduce", "worker_saturated",
+            "protect_main", "unknown")
+    if action in SKIP:
         return True, f"action={action}"
-    if action not in ("use_more", "continue", "switch"):
+    RUN = ("use_more", "continue", "switch", "route_worker")
+    if action not in RUN:
         return True, f"action={action!r} (unrecognized)"
     active = next((a for a in rec.get("accounts", []) if a.get("active")), None)
     if active and active.get("status") == "cool_down":
-        return True, f"active-status=cool_down"
+        return True, "active-status=cool_down"
     head = active.get("headroom_pct") if active else 100
     if head is not None and head < MIN_HEADROOM_PCT:
         return True, f"active-headroom={head}%"
@@ -242,7 +252,7 @@ def call_llm(corpus: str) -> list[dict]:
              "--model", LLM_MODEL,
              "--max-budget-usd", str(LLM_BUDGET),
              "-p", prompt],
-            capture_output=True, text=True, timeout=180,
+            capture_output=True, text=True, timeout=LLM_TIMEOUT_SEC,
         )
     except subprocess.TimeoutExpired:
         log("  LLM call timed out")

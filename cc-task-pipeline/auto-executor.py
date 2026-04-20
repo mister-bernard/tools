@@ -5,7 +5,12 @@ Consumes /recommend and /trends from a local tokenburn API and decides whether
 to auto-execute a queued task via task-executor.sh.
 
 Policy (strict — spawns a full Claude agent, expensive):
-  - action in {halt, cool_down_all, reduce, switch, unknown} → SKIP
+  - action in {halt, cool_down_all, reduce, switch, worker_saturated,
+               protect_main, unknown}                        → SKIP
+  - action == route_worker                                   → RUN only if
+                                                               active account
+                                                               already matches
+                                                               rec.route_to
   - action in {use_more, continue}                           → RUN if gates pass
   - active account status in {hot, cool_down}                → SKIP
   - per-account reserve floor on headroom                    → SKIP if violated
@@ -17,7 +22,7 @@ Also:
   - Records a one-line decision log per run
   - Respects kill-switch at $pipeline_root/.auto-exec-disabled
   - At most 1 task per run (the executor itself is rate-limited)
-  - Pings Telegram on `switch` / `reduce` / `cool_down_all` state transitions
+  - Pings Telegram on halt-like state transitions (see ALERT_ACTIONS below)
 """
 from __future__ import annotations
 
@@ -117,22 +122,37 @@ def _account_policy(aid: str) -> tuple[int, int, bool]:
     )
 
 
+SKIP_ACTIONS = (
+    "halt", "cool_down_all", "reduce", "switch",
+    "worker_saturated", "protect_main", "unknown",
+)
+RUN_ACTIONS = ("use_more", "continue", "route_worker")
+
+
 def decide(rec: dict, trends: dict | None) -> tuple[bool, str]:
     """Return (run, reason). See module docstring for policy."""
     action = rec.get("action")
-    if action in ("halt", "cool_down_all", "reduce", "switch", "unknown"):
+    if action in SKIP_ACTIONS:
         return False, f"action={action}"
-    if action not in ("use_more", "continue"):
+    if action not in RUN_ACTIONS:
         return False, f"action={action!r} (unrecognized)"
 
     active = next((a for a in rec.get("accounts", []) if a.get("active")), None)
     if not active:
         return False, "no-active-account"
+
+    aid = active.get("id", "?")
+    route_to = rec.get("route_to")
+    # For route_worker, the executor can only honor the routing if the active
+    # account IS the recommended target — we can't change the active account
+    # from here, so skip and let whatever controls routing resolve it.
+    if action == "route_worker" and route_to and route_to != aid:
+        return False, f"route-mismatch active={aid} route_to={route_to}"
+
     astatus = active.get("status")
     if astatus in ("hot", "cool_down"):
         return False, f"active-status={astatus}"
 
-    aid = active.get("id", "?")
     head = active.get("headroom_pct")
     wk = active.get("weekly_pct", 0)
     min_head, max_wk, spike_guard = _account_policy(aid)
@@ -142,8 +162,8 @@ def decide(rec: dict, trends: dict | None) -> tuple[bool, str]:
     if wk > max_wk:
         return False, f"weekly acct={aid} wk={wk}% max={max_wk}%"
 
-    if action == "use_more":
-        return True, f"action=use_more acct={aid} head={head}%"
+    if action in ("use_more", "route_worker"):
+        return True, f"action={action} acct={aid} head={head}%"
 
     # action == "continue": optional trend-spike guard
     if spike_guard and trends and trends.get("daily"):
@@ -191,7 +211,8 @@ def main() -> int:
     prev_action = state.get("last_action")
     cur_action = rec.get("action")
 
-    if prev_action != cur_action and cur_action in ("cool_down_all", "reduce", "switch"):
+    ALERT_ACTIONS = ("cool_down_all", "reduce", "switch", "protect_main", "worker_saturated")
+    if prev_action != cur_action and cur_action in ALERT_ACTIONS:
         notify_tg(f"⚠️ tokenburn /recommend: <b>{cur_action}</b>\n{rec.get('message', '')}")
 
     ok, reason = decide(rec, trends)

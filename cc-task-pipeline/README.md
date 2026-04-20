@@ -43,15 +43,27 @@ task-executor.sh (only when gates pass)
 ```
 GET /health    → {"status": "ok", ...}
 GET /recommend → {
-    "action": "use_more"|"continue"|"switch"|"reduce"|"cool_down_all"|"unknown",
+    "action": "use_more" | "continue" | "route_worker" | "worker_saturated"
+            | "protect_main" | "switch" | "reduce" | "cool_down_all"
+            | "halt" | "unknown",
     "message": "...",
+    "route_to": "B",              // optional — present on route_worker
+    "main_account": "A",          // optional
+    "worker_account": "B",        // optional
     "accounts": [
-        {"id": "A", "active": true, "status": "healthy"|"warm"|"hot"|"cool_down",
+        {"id": "A", "active": true,
+         "role": "main" | "worker",
+         "status": "healthy" | "warm" | "hot" | "cool_down",
          "session_pct": 0-100, "weekly_pct": 0-100, "headroom_pct": 0-100}
     ]
 }
 GET /trends?days=7 → {"daily": [{"date": "YYYY-MM-DD", "tokens": int}, ...]}
 ```
+
+The router fields (`route_to`, `main_account`, `worker_account`, `role`) are
+optional — older or simpler tokenburn implementations that only emit
+`{use_more, continue, switch, reduce, cool_down_all, unknown}` still work
+unchanged.
 
 See [`../tb/`](../tb/) for a reference implementation.
 
@@ -112,18 +124,26 @@ Auto-executor's `decide()`:
 |---|---|---|---|
 | `use_more` | active not hot/cool_down | reserve floor + weekly cap | **RUN** |
 | `continue` | active not hot/cool_down | reserve floor + weekly cap + trend-spike (if enabled) | RUN |
-| `switch` | — | — | SKIP (let routing resolve) |
-| `reduce` | — | — | SKIP (all hot) |
-| `cool_down_all` | — | — | SKIP (halt) |
-| `halt` / `unknown` / unrecognized | — | — | SKIP (defensive) |
+| `route_worker` | active == `rec.route_to`, not hot/cool_down | reserve floor + weekly cap | RUN (else SKIP `route-mismatch`) |
+| `worker_saturated` | — | — | SKIP (worker hot) |
+| `protect_main` | — | — | SKIP (main over reserve) |
+| `switch` | — | — | SKIP (legacy; let routing resolve) |
+| `reduce` | — | — | SKIP (legacy all-hot) |
+| `cool_down_all` / `halt` | — | — | SKIP (hard halt) |
+| `unknown` / unrecognized | — | — | SKIP (defensive) |
 | (api unreachable) | — | — | SKIP (fail closed) |
+
+The `route_worker` check is asymmetric on purpose: the executor inherits the
+active Claude account from the shell that invokes it, so it can't change
+accounts — it can only decide whether to fire. On a mismatch we skip and
+wait for whatever layer owns routing to swap accounts on the next tick.
 
 Generator is more permissive (single cheap LLM call per run):
 
 | `/recommend` action | result |
 |---|---|
-| `use_more` / `continue` / `switch` | run (even on switch — single cheap call) |
-| `cool_down_all` / `reduce` / `halt` / `unknown` | skip |
+| `use_more` / `continue` / `switch` / `route_worker` | run (routing doesn't matter for a single extraction call) |
+| `cool_down_all` / `reduce` / `worker_saturated` / `protect_main` / `halt` / `unknown` | skip |
 | active status = `cool_down` | skip |
 | active headroom < `min_headroom_pct` | skip |
 | (api unreachable) | run permissive |
