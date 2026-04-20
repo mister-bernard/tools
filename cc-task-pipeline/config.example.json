@@ -1,0 +1,54 @@
+{
+  "_comment": "Copy to config.json and edit. Paths may use ~ and $ENV_VAR. All fields have sane defaults except pipeline_root.",
+
+  "pipeline_root": "~/.cc-task-pipeline",
+
+  "tokenburn_url": "http://127.0.0.1:18795",
+  "claude_bin": "claude",
+  "llm_model": "claude-sonnet-4-6",
+  "llm_budget_usd": 0.50,
+  "llm_timeout_sec": 300,
+  "executor_budget_usd": 2.00,
+  "executor_timeout_sec": 900,
+
+  "generator": {
+    "lookback_min": 70,
+    "max_sessions_per_run": 15,
+    "max_chars_per_session": 4000,
+    "max_total_chars": 40000,
+    "max_tasks_per_run": 4,
+    "min_headroom_pct": 10,
+    "dedupe_similarity": 0.78,
+    "safe_categories": [
+      "research", "audit", "scan", "reporting", "documentation",
+      "cleanup", "dedup", "code-review", "verification", "analysis"
+    ]
+  },
+
+  "executor": {
+    "_comment": "Per-account reserve policy. Keys are account IDs as reported by /recommend. Unlisted accounts use the default_* floor.",
+    "accounts": {
+      "A": {"min_headroom_pct": 10, "max_weekly_pct": 90, "trend_spike_guard": true},
+      "B": {"min_headroom_pct": 0,  "max_weekly_pct": 100, "trend_spike_guard": false}
+    },
+    "default_min_headroom_pct": 20,
+    "default_max_weekly_pct": 85,
+    "trend_spike_multiplier": 2.0,
+    "extra_add_dirs": []
+  },
+
+  "owner_labels": {
+    "_comment": "Rename owner tags shown in telegram / CLI. Leave as-is unless you want different names.",
+    "human": "human",
+    "agent": "agent"
+  },
+
+  "telegram": {
+    "_comment": "Optional — leave tokens blank to disable push. Reads env first, then these values.",
+    "bot_token_env": "TELEGRAM_BOT_TOKEN",
+    "chat_id_env":   "TELEGRAM_CHAT_ID",
+    "bot_token": "",
+    "chat_id": "",
+    "dashboard_url": ""
+  }
+}

@@ -12,6 +12,7 @@ A book club for CLI tools. Bring your own, take what you need.
 | **[ig-download](ig-download/)** | Download Instagram Reels and Posts via yt-dlp with cookie fallback | Bash |
 | **[tb-reaper](tb-reaper/)** | Cooperative idle-session reaper for Claude Code — negotiates shutdown before killing long-idle sessions | Python |
 | **[cc-notify](cc-notify/)** | Desktop notifications for Claude Code via ntfy.sh — survives tmux, mosh, SSH; shows the session topic as the title | Bash |
+| **[cc-task-pipeline](cc-task-pipeline/)** | Autonomous task pipeline for Claude Code — generates tasks from session history, executes safe ones, gated on local token budget | Python |
 
 ## Quick start
 
