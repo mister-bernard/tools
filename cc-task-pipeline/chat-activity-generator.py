@@ -345,7 +345,7 @@ def append_tasks(new: list[dict]) -> tuple[int, list[dict]]:
         entry = {
             "id": "t" + uuid.uuid4().hex[:6],
             "task": task_desc[:500],
-            "status": "active",
+            "status": "pending",
             "owner": owner,
             "priority": t.get("priority") if t.get("priority") in ("low", "med", "high") else "med",
             "category": category or "general",
