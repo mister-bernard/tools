@@ -1,0 +1,6 @@
+node_modules/
+.env
+state/
+telegraph.json
+*.log
+*.bak.*

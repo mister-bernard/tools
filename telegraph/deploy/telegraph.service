@@ -1,0 +1,16 @@
+[Unit]
+Description=Telegraph — Telegram-to-bridge orchestrator
+After=network.target bridge.service
+Wants=bridge.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/telegraph
+ExecStart=/usr/bin/env node --env-file=/opt/telegraph/.env /opt/telegraph/src/main.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

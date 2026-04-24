@@ -1,0 +1,52 @@
+{
+  "accounts": {
+    "default": {
+      "botToken": "${TELEGRAM_BOT_TOKEN}",
+      "botUsername": "YourBot",
+      "pollTimeout": 30,
+      "ackReaction": null,
+      "requireMention": false
+    },
+    "secondary": {
+      "botToken": "${TELEGRAM_SECONDARY_BOT_TOKEN}",
+      "botUsername": "",
+      "pollTimeout": 30,
+      "ackReaction": null,
+      "requireMention": false
+    }
+  },
+
+  "bridge": {
+    "baseUrl": "http://127.0.0.1:18901/v1",
+    "bearer": "${BRIDGE_PROVIDER_KEY}"
+  },
+
+  "bindings": [
+    { "account": "secondary", "chat": "dm",    "peer": "10000001",    "session": "session-secondary" },
+    { "account": "default",   "chat": "dm",    "peer": "10000001",    "session": "session-primary" },
+
+    { "account": "default",   "chat": "group", "peer": "-100000002",  "session": "session-team-a" },
+    { "account": "default",   "chat": "group", "peer": "-100000004",  "session": "session-team-b" },
+    { "account": "default",   "chat": "group", "peer": "-100000006",  "session": "session-group-a" },
+
+    { "account": "default",   "chat": "group", "peer": "*",           "session": "session-default" },
+    { "account": "default",   "chat": "dm",    "peer": "*",           "session": "session-default" },
+
+    { "account": "signal",    "chat": "dm",    "peer": "+15550001234", "session": "session-primary" },
+    { "account": "signal",    "chat": "group", "peer": "*",            "session": "session-default" },
+    { "account": "signal",    "chat": "dm",    "peer": "*",            "session": "session-default" }
+  ],
+
+  "delivery": {
+    "parseMode": "HTML"
+  },
+
+  "context": {
+    "sharedContextFile": null
+  },
+
+  "originStore": {
+    "enabled": true,
+    "maxRecent": 5000
+  }
+}

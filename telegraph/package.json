@@ -1,0 +1,17 @@
+{
+  "name": "telegraph",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Telegram and Signal router that dispatches messages to CLI agent sessions via an HTTP bridge.",
+  "license": "MIT",
+  "repository": "https://github.com/mister-bernard/tools",
+  "keywords": ["telegram", "signal", "cli", "agent", "router", "bridge"],
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --test tests/"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
