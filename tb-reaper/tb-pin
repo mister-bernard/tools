@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# tb-pin — mark a Claude Code session as unreapable, optionally with expiry
+#
+# Usage:
+#   tb-pin <sid|partial-sid>             # pin indefinitely
+#   tb-pin <sid|partial-sid> <hours>     # pin for N hours, then auto-expire
+#   tb-pin --list                        # show pinned sessions
+#   tb-pin --unpin <sid|partial-sid>     # remove pin
+#
+# Sentinel lives at ~/.claude/reaper/pinned/<sid>. If the file contains a
+# unix-epoch expiry, the reaper auto-deletes it once that time has passed.
+
+set -euo pipefail
+PIN_DIR="${HOME}/.claude/reaper/pinned"
+mkdir -p "$PIN_DIR"
+
+resolve_sid() {
+    local q="$1"
+    # Exact match first
+    if [ -d "${HOME}/.claude/sessions" ] && [ -f "${HOME}/.claude/sessions/${q}.json" ]; then
+        echo "$q"
+        return 0
+    fi
+    # Partial match against session files
+    local matches
+    matches=$(find "${HOME}/.claude/sessions" -maxdepth 1 -name "${q}*.json" -type f 2>/dev/null | head -5)
+    local count
+    count=$(echo -n "$matches" | grep -c '^' || true)
+    if [ "$count" = "1" ]; then
+        basename "$matches" .json
+        return 0
+    elif [ "$count" = "0" ]; then
+        echo "no session matches '$q'" >&2
+        return 1
+    else
+        echo "ambiguous — multiple matches for '$q':" >&2
+        echo "$matches" | xargs -n1 basename 2>&1 | sed 's/.json$//' >&2
+        return 1
+    fi
+}
+
+case "${1:-}" in
+    --list|-l)
+        if [ -z "$(ls -A "$PIN_DIR" 2>/dev/null)" ]; then
+            echo "No pinned sessions."
+            exit 0
+        fi
+        printf '%-40s  %s\n' SID EXPIRES
+        for f in "$PIN_DIR"/*; do
+            [ -f "$f" ] || continue
+            sid=$(basename "$f")
+            body=$(cat "$f" 2>/dev/null || echo "")
+            if [ -n "$body" ]; then
+                expiry=$(date -d "@$body" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "$body")
+            else
+                expiry="never"
+            fi
+            printf '%-40s  %s\n' "$sid" "$expiry"
+        done
+        ;;
+    --unpin|-u)
+        [ -n "${2:-}" ] || { echo "usage: tb-pin --unpin <sid>" >&2; exit 1; }
+        sid=$(resolve_sid "$2")
+        rm -f "$PIN_DIR/$sid"
+        echo "unpinned $sid"
+        ;;
+    -h|--help|"")
+        sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+        ;;
+    *)
+        sid=$(resolve_sid "$1")
+        if [ -n "${2:-}" ]; then
+            hours="$2"
+            expiry=$(( $(date +%s) + hours * 3600 ))
+            echo "$expiry" > "$PIN_DIR/$sid"
+            echo "pinned $sid until $(date -d "@$expiry" '+%Y-%m-%d %H:%M')"
+        else
+            : > "$PIN_DIR/$sid"
+            echo "pinned $sid (no expiry)"
+        fi
+        ;;
+esac

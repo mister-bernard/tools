@@ -14,6 +14,7 @@ Real-time terminal dashboard for Claude Pro Max token usage. Tracks session cons
 - **Smart advisories** — automatic alerts when you're under-utilizing or approaching limits
 - **System status** — memory, CPU, disk, load, network, service health, orphan detection
 - **Session management** — engine table with model, idle time, context volume per session
+- **Live config reload** — watches `~/.tokenburn.json` for external changes (e.g. when [`cc use B`](https://github.com/mister-bernard/openclaw-claude-bridge) flips the active account) and picks them up on the next refresh tick without restart
 
 ## Install
 
@@ -60,6 +61,9 @@ On first run, creates `~/.tokenburn.json`:
     {
       "id": "A",
       "name": "Primary",
+      "provider": "anthropic",
+      "usage_profile": "default",
+      "claude_bin": "/home/you/.local/bin/claude",
       "window_5h_limit": 900000,
       "window_7d_limit": 5000000,
       "target_pct_5h": 70
@@ -74,6 +78,24 @@ On first run, creates `~/.tokenburn.json`:
   "orphan_mem_mb": 150
 }
 ```
+
+The config is re-read on every refresh tick (currently `refresh_secs`
+apart). External writes — for example, `cc use B` from
+[openclaw-claude-bridge](https://github.com/mister-bernard/openclaw-claude-bridge)
+flipping `active_account`, or `cc-switch.sh` rotating bridges — are
+picked up without restarting `tb`.
+
+### Account fields
+
+| Field | Used by `tb` for | Notes |
+|-------|------------------|-------|
+| `id` | Active-account lookup, account switcher (`a` key) | Short handle (`A`, `B`, …) |
+| `name` | Display | Human-readable label |
+| `usage_profile` | Keys into `~/.anthropic-usage/usage-clean.json` profiles | `default`, `backup`, etc. |
+| `provider` | *(read by companion tools)* | Free-form — e.g. `anthropic`, `minimax` |
+| `claude_bin` | *(read by companion tools)* | Launcher path — `cc` uses this; `tb` ignores it |
+| `window_5h_limit` / `window_7d_limit` | Budget math | Token ceilings for this account |
+| `target_pct_5h` | Optimization score | Ideal utilization target |
 
 ### Environment variables
 

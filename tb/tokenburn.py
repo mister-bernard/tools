@@ -51,6 +51,8 @@ USAGE_CLEAN   = Path(os.environ.get("TB_USAGE_FILE",
                      str(Path.home() / ".anthropic-usage" / "usage-clean.json")))
 USAGE_HISTORY = Path(os.environ.get("TB_USAGE_HISTORY",
                      str(Path.home() / ".anthropic-usage" / "usage-history.jsonl")))
+MINIMAX_USAGE = Path(os.environ.get("TB_MINIMAX_USAGE",
+                     str(Path.home() / ".minimax-usage" / "usage.json")))
 
 # ─────────────────────────────────────────────────────────────
 # Default config — multi-account ready
@@ -61,9 +63,10 @@ DEFAULT_CFG: dict = {
         {
             "id":              "A",
             "name":            "Primary",
-            "window_5h_limit": 900_000,   # input+output tokens (not cache)
+            "usage_profile":   "default",   # key in usage-clean.json profiles
+            "window_5h_limit": 900_000,     # input+output tokens (not cache)
             "window_7d_limit": 5_000_000,
-            "target_pct_5h":   70,        # ideal utilisation %
+            "target_pct_5h":   70,          # ideal utilisation %
         },
     ],
     "warn_pct":      60,
@@ -81,6 +84,19 @@ MODEL_SHORT = {
     "claude-sonnet-4-6":         "sonnet:4",
     "claude-haiku-4-5-20251001": "haiku:4",
 }
+
+
+def _aggregate_by_model(by_model: dict[str, int]) -> list[tuple[str, int]]:
+    """Aggregate token counts by short model name (opus/sonnet/haiku).
+
+    Merges different versions of the same model family and returns
+    sorted descending by token count.
+    """
+    merged: dict[str, int] = {}
+    for mk, toks in by_model.items():
+        short = _short_model(mk)
+        merged[short] = merged.get(short, 0) + toks
+    return sorted(merged.items(), key=lambda x: -x[1])
 
 JSONL_CACHE_TTL = 45   # seconds — re-parse JSONL if mtime changed or this elapsed
 
@@ -231,6 +247,7 @@ class TokenData:
 
     def __init__(self):
         self.config    = self._load_config()
+        self._cfg_mtime = self._config_mtime()
         self._acct     = self._active_account()
         # JSONL cache: session_id -> (mtime, parsed_result)
         self._jcache:  dict[str, tuple[float, dict]] = {}
@@ -238,9 +255,22 @@ class TokenData:
         self._cycle:   dict[str, object] = {}
         self._take_snapshot()
 
+    def _config_mtime(self) -> float:
+        try:
+            return CONFIG_FILE.stat().st_mtime
+        except OSError:
+            return 0.0
+
     def _begin_refresh(self):
         """Call once at the start of each refresh cycle to clear per-cycle cache."""
         self._cycle.clear()
+        # Pick up external changes to ~/.tokenburn.json — e.g. `cc use B`
+        # flipping active_account or `cc-switch.sh` updating accounts.
+        mtime = self._config_mtime()
+        if mtime and mtime != self._cfg_mtime:
+            self.config = self._load_config()
+            self._acct  = self._active_account()
+            self._cfg_mtime = mtime
 
     # ── Anthropic usage (ground truth from browser scraper) ─
     def anthropic_usage(self) -> dict:
@@ -353,7 +383,7 @@ class TokenData:
             ads.append({"level": "warn",
                         "msg": f"Usage data stale ({au.get('age_mins', 0):.0f}m old)"})
 
-        prof = au["profiles"].get("default")
+        prof = self.active_profile()
         if not prof:
             self._cycle["advisories"] = ads
             return ads
@@ -441,45 +471,83 @@ class TokenData:
             ads.append({"level": "info",
                         "msg": "Single session, low usage — spin up parallel work"})
 
-        # ── Subscription upgrade advisor ───────────────────
-        # Fire only when genuinely constrained — not noisy status updates.
-        # Conditions that indicate a second Pro Max account would help:
-        #   A) Session is critically full AND can't coast to reset
-        #      (sp >= 88 AND sr > 75min — stuck for >75 min with no headroom)
-        #   B) Weekly nearly exhausted AND still >3 days left in the week
-        #      (wp >= 80 AND days_left >= 3 AND burning faster than ideal)
-        #   C) Both session AND weekly are heavily loaded simultaneously
-        #      (sp >= 70 AND wp >= 70)
-        # Guard: only emit one upgrade advisory per call; prefer the
-        # highest-signal condition.
-        upgrade_msg: Optional[str] = None
+        # ── Multi-account intelligence ──────────────────────
+        # Check if another account has capacity when current is constrained
+        other_accounts = [
+            (a, self.profile_for_account(a))
+            for a in self.all_accounts()
+            if a.get("id") != self._acct.get("id")
+        ]
+        other_has_capacity = False
+        best_other: Optional[tuple[dict, dict]] = None
+        for oa, op in other_accounts:
+            if op and op["weekly_all_pct"] < 70:
+                other_has_capacity = True
+                if best_other is None or op["weekly_all_pct"] < best_other[1]["weekly_all_pct"]:
+                    best_other = (oa, op)
 
-        # Condition A — session stuck at ceiling with substantial time remaining
-        if sp >= 88 and sr is not None and sr > 75:
-            hrs_left = sr / 60.0
-            upgrade_msg = (
-                f"Session at {sp}% with {hrs_left:.1f}h until reset — "
-                f"a second Pro Max account would let you keep going now"
+        # Active account constrained + other account has room → suggest swap
+        if best_other:
+            oa, op = best_other
+            oid = oa.get("id", "?")
+            oname = oa.get("name", oid)
+            ow = op["weekly_all_pct"]
+            os5 = op["session_pct"]
+
+            if sp >= 88 and sr is not None and sr > 60:
+                ads.append({"level": "action",
+                            "msg": f"Session {sp}% capped — switch to {oname} "
+                                   f"(5h:{os5}% 7d:{ow}%) via 'a' key or claude-b"})
+            elif wp >= 80:
+                ads.append({"level": "action",
+                            "msg": f"Weekly {wp}% near limit — {oname} has "
+                                   f"{100 - ow:.0f}% weekly headroom, consider switching"})
+            elif sp >= 70 and wp >= 65:
+                ads.append({"level": "info",
+                            "msg": f"Load building — {oname} at {ow}% weekly "
+                                   f"available as overflow"})
+
+        # No other account configured or all accounts are hot
+        if not other_has_capacity:
+            all_weekly_hot = all(
+                (p["weekly_all_pct"] >= 75 if p else True)
+                for _, p in other_accounts
             )
+            if wp >= 80 and all_weekly_hot and len(other_accounts) > 0:
+                ads.append({"level": "upgrade",
+                            "msg": f"All accounts >75% weekly — consider an additional "
+                                   f"Pro Max subscription for overflow capacity"})
+            elif wp >= 80 and not other_accounts:
+                if wr is not None:
+                    days_left = wr / (60 * 24)
+                    if days_left >= 2:
+                        ads.append({"level": "upgrade",
+                                    "msg": f"Weekly {wp}% with {days_left:.1f}d left — "
+                                           f"a second Pro Max account would prevent downtime"})
 
-        # Condition B — weekly nearly gone, week not nearly over
-        if upgrade_msg is None and wp >= 80 and wr is not None:
-            days_left = wr / (60 * 24)
-            if days_left >= 3:
-                upgrade_msg = (
-                    f"Weekly at {wp}% with {days_left:.1f}d remaining — "
-                    f"second account would carry the overflow"
-                )
+        # ── Model mix optimization ────────────────────────────
+        # Sonnet-heavy usage when Haiku could handle routine work
+        if snp > 60 and wp > 50:
+            ads.append({"level": "info",
+                        "msg": f"Sonnet at {snp}% — route cron/auto-reply "
+                               f"sessions to Haiku to preserve weekly quota"})
+        elif snp > wp + 25:
+            ads.append({"level": "info",
+                        "msg": f"Sonnet {snp}% vs all-model {wp}% — "
+                               f"heavy Sonnet skew, consider Opus for complex tasks"})
 
-        # Condition C — both ceilings closing in together
-        if upgrade_msg is None and sp >= 70 and wp >= 70:
-            upgrade_msg = (
-                f"Session {sp}% + weekly {wp}% both running hot — "
-                f"consider a second Pro Max account for parallel capacity"
-            )
-
-        if upgrade_msg:
-            ads.append({"level": "upgrade", "msg": upgrade_msg})
+        # ── Combined capacity summary ─────────────────────────
+        # If multiple accounts, show combined effective capacity
+        if len(other_accounts) > 0:
+            total_weekly_left = max(0, 100 - wp)
+            for _, op in other_accounts:
+                if op:
+                    total_weekly_left += max(0, 100 - op["weekly_all_pct"])
+            num_accts = 1 + sum(1 for _, op in other_accounts if op)
+            if total_weekly_left < 30 and num_accts > 1:
+                ads.append({"level": "warn",
+                            "msg": f"Combined weekly headroom: {total_weekly_left:.0f}% "
+                                   f"across {num_accts} accounts — conserve"})
 
         self._cycle["advisories"] = ads
         return ads
@@ -515,9 +583,77 @@ class TokenData:
     def switch_account(self, acct_id: str):
         self.config["active_account"] = acct_id
         self._acct = self._active_account()
+        # Persist to disk so `cc`, `cc-switch.sh`, and other readers of
+        # ~/.tokenburn.json see the change. Prefer cc-switch.sh when
+        # present — it also rotates bridges and updates openclaw.json.
+        try:
+            import subprocess
+            switch_sh = Path.home() / "scripts" / "cc-switch.sh"
+            if switch_sh.is_file() and os.access(switch_sh, os.X_OK):
+                subprocess.Popen(
+                    ["bash", str(switch_sh), acct_id],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            else:
+                cfg_on_disk = json.loads(CONFIG_FILE.read_text())
+                cfg_on_disk["active_account"] = acct_id
+                CONFIG_FILE.write_text(
+                    json.dumps(cfg_on_disk, indent=2) + "\n"
+                )
+                self._cfg_mtime = self._config_mtime()
+        except Exception:
+            pass
+
+    def minimax_usage(self) -> Optional[dict]:
+        """Return current Minimax usage snapshot (from refresh cron), or None.
+
+        May return a record with available=false when the proxy log is
+        missing. Renderers should check `available` and render an explicit
+        "(proxy down)" state rather than hide the outage.
+        """
+        if "minimax_usage" in self._cycle:
+            return self._cycle["minimax_usage"]
+        out: Optional[dict] = None
+        try:
+            if MINIMAX_USAGE.exists():
+                out = json.loads(MINIMAX_USAGE.read_text())
+        except Exception:
+            out = None
+        self._cycle["minimax_usage"] = out
+        return out
 
     def all_accounts(self) -> list[dict]:
         return self.config.get("accounts", [])
+
+    def profile_for_account(self, acct: dict) -> Optional[dict]:
+        """Get Anthropic usage profile for a given account config.
+
+        Returns None for:
+          - non-Anthropic accounts (provider != 'anthropic'), and
+          - Anthropic accounts with no `usage_profile` set or whose
+            profile is absent from usage-clean.json.
+
+        The previous behavior silently defaulted to the 'default' profile,
+        which caused accounts without a profile to display a duplicate of
+        whichever account owned 'default'.
+        """
+        if acct.get("provider", "anthropic") != "anthropic":
+            return None
+        pname = acct.get("usage_profile")
+        if not pname:
+            return None
+        au = self.anthropic_usage()
+        return au.get("profiles", {}).get(pname)
+
+    def all_account_profiles(self) -> list[tuple[dict, Optional[dict]]]:
+        """Return (account_config, profile_data) for all configured accounts."""
+        return [(a, self.profile_for_account(a)) for a in self.all_accounts()]
+
+    def active_profile(self) -> Optional[dict]:
+        """Shortcut: Anthropic usage profile for the currently active account."""
+        return self.profile_for_account(self._acct)
 
     # ── JSONL access ───────────────────────────────────────
     def _jsonl_for(self, session_id: str) -> Optional[dict]:
@@ -654,8 +790,7 @@ class TokenData:
 
     def burn_pct_per_10min(self) -> float:
         """% of 5h window burned per 10 minutes, using Anthropic data when available."""
-        au   = self.anthropic_usage()
-        prof = au.get("profiles", {}).get("default")
+        prof = self.active_profile()
         if prof and prof.get("session_reset_mins"):
             # Derive from real session pct / elapsed time
             sr_mins  = prof["session_reset_mins"]
@@ -669,8 +804,7 @@ class TokenData:
         return safe_div(self.burn_rate_per_min() * 10, limit) * 100 if limit else 0.0
 
     def mins_until_full(self) -> Optional[int]:
-        au   = self.anthropic_usage()
-        prof = au.get("profiles", {}).get("default")
+        prof = self.active_profile()
         if prof:
             pct = prof["session_pct"]
         else:
@@ -691,8 +825,7 @@ class TokenData:
         return float(self._acct.get("target_pct_5h", 70))
 
     def is_wasting(self) -> bool:
-        au   = self.anthropic_usage()
-        prof = au.get("profiles", {}).get("default")
+        prof = self.active_profile()
         if prof:
             sr = prof.get("session_reset_mins")
             # Wasting = low session % with significant time elapsed in window
@@ -1164,8 +1297,7 @@ class TokenData:
         rate     = self.burn_rate_per_min()
 
         # Use Anthropic session pct for burn score, with JSONL fallback
-        au   = self.anthropic_usage()
-        prof = au.get("profiles", {}).get("default")
+        prof = self.active_profile()
         pct5 = prof["session_pct"] if prof else self.window_pct(5)
 
         # When Anthropic session is 0% (just reset) but we're actively burning,
@@ -1225,48 +1357,47 @@ class HeaderBar(Static):
         sc       = data.score()
         rate     = data.burn_rate_per_min()
         max_p    = data.config.get("max_parallel", 10)
-        plan     = data.config.get("plan_name", "Pro Max")
         warn     = data.config.get("warn_pct", 60)
         urg      = data.config.get("urgent_pct", 80)
+        au       = data.anthropic_usage()
+        src      = "●" if au.get("available") and not au.get("stale") else (
+                   "○" if au.get("available") else "×")
 
-        # Real Anthropic data (preferred), fallback to local estimates
-        au   = data.anthropic_usage()
-        prof = au.get("profiles", {}).get("default")
-
-        if prof:
-            pct5  = prof["session_pct"]
-            pct7  = prof["weekly_all_pct"]
-            sn_p  = prof["weekly_sonnet_pct"]
-            sr_m  = prof.get("session_reset_mins")
+        # Reset time from active account (for header badge)
+        prof_active = data.profile_for_account(data._acct)
+        if prof_active:
+            sr_m   = prof_active.get("session_reset_mins")
             reset5 = f"{int(sr_m // 60)}h{int(sr_m % 60):02d}m" if sr_m is not None else "?"
-            src    = "●" if not au.get("stale") else "○"
         else:
-            pct5   = data.window_pct(5)
-            pct7   = safe_div(data.seven_day_total(), data.window_limit(7)) * 100
-            sn_p   = 0
             reset5 = data.window_reset_str(5)
-            src    = "×"
 
         t = Text()
         t.append(" TB ", style="bold white on #1e1e38")
         t.append(f" {reset5} ", style="cyan")
         t.append(f" P{len(sessions)}/{max_p}  ", style="bold white")
 
-        c5 = pct_color(pct5, warn, urg)
-        t.append("5h ", style="dim"); t.append(bar(pct5, 8, fill_style=c5))
-        t.append(f" {pct5:.0f}%  ", style=f"bold {c5}")
-
-        c7 = pct_color(pct7, 50, 75)
-        t.append("7d ", style="dim"); t.append(bar(pct7, 8, fill_style=c7))
-        t.append(f" {pct7:.0f}%  ", style=f"bold {c7}")
-
-        if sn_p:
-            cs = pct_color(sn_p, 50, 75)
-            t.append("sn ", style="dim"); t.append(bar(sn_p, 6, fill_style=cs))
-            t.append(f" {sn_p:.0f}%  ", style=f"dim {cs}")
+        # Text-only per-account percentages — visual bars live in the top-right StatsPanel.
+        active_id = data._acct.get("id", "A")
+        for acct in data.all_accounts():
+            aid    = acct.get("id", "?")
+            p      = data.profile_for_account(acct)
+            marker = "●" if aid == active_id else "○"
+            lbl_style = "bold white" if aid == active_id else "white"
+            if not p:
+                t.append(f"{marker}{aid}: --  ", style="dim")
+                continue
+            s5 = p["session_pct"]; w7 = p["weekly_all_pct"]; sn = p["weekly_sonnet_pct"]
+            c5 = pct_color(s5, warn, urg)
+            c7 = pct_color(w7, 50, 75)
+            t.append(f"{marker}{aid}: ", style=lbl_style)
+            t.append("5h ", style="dim"); t.append(f"{s5:.0f}%", style=f"bold {c5}")
+            t.append("  7d ", style="dim"); t.append(f"{w7:.0f}%", style=f"bold {c7}")
+            if sn:
+                cs = pct_color(sn, 50, 75)
+                t.append("  sn ", style="dim"); t.append(f"{sn:.0f}%", style=f"dim {cs}")
+            t.append("  ")
 
         t.append(f"rate:{rate:.0f}/min  ", style="dim white")
-        t.append(f"{plan} ", style="dim")
         t.append(f"{src}", style="green" if src == "●" else "red")
         if data.is_wasting():
             t.append(f"  ⚠ WASTING", style="bold yellow")
@@ -1280,9 +1411,7 @@ class HeaderBar(Static):
         today = data.today_stats()
         if today["by_model"]:
             t.append("    ")
-            for mk, toks in sorted(today["by_model"].items(), key=lambda x: -x[1])[:3]:
-                parts = mk.split("-")
-                short = MODEL_SHORT.get(mk, parts[1] if len(parts) > 1 else mk)
+            for short, toks in _aggregate_by_model(today["by_model"])[:3]:
                 t.append(f"{short}:{fmt_k(toks)}  ", style="dim cyan")
 
         self.update(t)
@@ -1336,8 +1465,7 @@ class BurndownPanel(Static):
             t.append(f"  {fmt_k(val)}{lim_str}\n", style="dim white")
 
         # Use Anthropic session pct (preferred) or fallback
-        au   = data.anthropic_usage()
-        prof = au.get("profiles", {}).get("default")
+        prof = data.active_profile()
         pct5 = prof["session_pct"] if prof else data.window_pct(5)
         rate  = data.burn_rate_per_min()
         p10   = data.burn_pct_per_10min()
@@ -1354,8 +1482,8 @@ class BurndownPanel(Static):
 class StatsPanel(Static):
     DEFAULT_CSS = """
     StatsPanel {
-        width: 34;
-        height: 15;
+        width: 38;
+        height: 25;
         border: round #2a2a44;
         background: #0a0a14;
         padding: 0 1;
@@ -1364,19 +1492,14 @@ class StatsPanel(Static):
     def update_stats(self, data: TokenData):
         self.update(self._build(data))
 
-    def _build(self, data: TokenData) -> Text:
-        au       = data.anthropic_usage()
-        prof     = au.get("profiles", {}).get("default")
-        rate     = data.burn_rate_per_min()
-        mins     = data.mins_until_full()
-        sc       = data.score()
-        today    = data.today_stats()
-        warn     = data.config.get("warn_pct", 60)
-        urg      = data.config.get("urgent_pct", 80)
-        max_p    = data.config.get("max_parallel", 10)
-        sessions = data.active_sessions()
+    def _render_account_block(self, data: TokenData, acct: dict,
+                              is_active: bool) -> Text:
+        """Render the full bar-treatment block for one account."""
+        warn = data.config.get("warn_pct", 60)
+        urg  = data.config.get("urgent_pct", 80)
+        aid  = acct.get("id", "?")
+        prof = data.profile_for_account(acct)
 
-        # Use Anthropic data when available, else fallback
         if prof:
             pct5   = prof["session_pct"]
             pct7   = prof["weekly_all_pct"]
@@ -1386,38 +1509,46 @@ class StatsPanel(Static):
             reset5 = f"{int(sr_m//60)}h{int(sr_m%60):02d}m" if sr_m is not None else "?"
             wr_d   = wr_m / (60*24) if wr_m else 0
             reset7 = f"{wr_d:.1f}d" if wr_d else "?"
-        else:
+        elif is_active:
             pct5   = data.window_pct(5)
             pct7   = safe_div(data.seven_day_total(), data.window_limit(7)) * 100
             snp    = 0
             reset5 = data.window_reset_str(5)
             reset7 = data.seven_day_reset_day()
             wr_d   = 0
+        else:
+            t = Text()
+            marker = "○"
+            t.append(f"\n  {marker} [{aid}] ", style="white")
+            t.append("no data\n", style="dim grey50")
+            return t
 
         left5 = max(0.0, 100.0 - pct5)
         left7 = max(0.0, 100.0 - pct7)
 
         t = Text()
+        marker = "●" if is_active else "○"
+        lbl_style = "bold white" if is_active else "white"
         c5 = pct_color(pct5, warn, urg)
-        t.append(f"\n  {pct5:.0f}%", style=f"bold {c5}")
+        t.append(f"\n  {marker} [{aid}] ", style=lbl_style)
+        t.append(f"{pct5:.0f}%", style=f"bold {c5}")
         t.append(" Used  ", style="dim white")
         t.append(f"{left5:.0f}%", style="bold green")
-        t.append(" Left\n\n", style="dim white")
+        t.append(" Left\n", style="dim white")
 
-        c5b  = pct_color(pct5, warn, urg)
         cool5 = "COOL" if pct5 < warn else ("WARN" if pct5 < urg else "HOT!")
-        t.append("  5h  ", style="dim"); t.append(bar(pct5, 12, fill_style=c5b))
+        t.append("  5h  ", style="dim"); t.append(bar(pct5, 12, fill_style=c5))
         t.append(f"  {pct5:.0f}%\n", style="dim white")
         t.append(f"       resets {reset5}  ", style="dim")
-        t.append(cool5, style=c5b)
+        t.append(cool5, style=c5)
         t.append("\n")
 
-        c7b  = pct_color(pct7, 50, 75)
+        c7 = pct_color(pct7, 50, 75)
         cool7 = "COOL" if pct7 < 50 else ("WARM" if pct7 < 75 else "HOT!")
-        t.append("  7d  ", style="dim"); t.append(bar(pct7, 12, fill_style=c7b))
+        t.append("  7d  ", style="dim"); t.append(bar(pct7, 12, fill_style=c7))
         t.append(f"  {pct7:.0f}%\n", style="dim white")
         t.append(f"       resets {reset7}  ", style="dim")
-        t.append(cool7, style=c7b)
+        t.append(cool7, style=c7)
         t.append(f"  left:{left7:.0f}%\n", style="dim")
 
         if snp:
@@ -1425,22 +1556,43 @@ class StatsPanel(Static):
             t.append("  sn  ", style="dim"); t.append(bar(snp, 12, fill_style=cs))
             t.append(f"  {snp:.0f}%\n", style="dim white")
 
-        # Weekly budget advisor
-        if prof and wr_d > 0:
+        if is_active and wr_d > 0:
             ideal_daily = left7 / max(0.5, wr_d)
-            t.append(f"\n  Budget: ~{ideal_daily:.0f}%/day\n", style="dim cyan")
+            t.append(f"  Budget: ~{ideal_daily:.0f}%/day\n", style="dim cyan")
 
-        t.append(f"  P: {len(sessions)}/{max_p}\n", style="cyan")
+        return t
+
+    def _build(self, data: TokenData) -> Text:
+        rate     = data.burn_rate_per_min()
+        mins     = data.mins_until_full()
+        sc       = data.score()
+        today    = data.today_stats()
+        max_p    = data.config.get("max_parallel", 10)
+        sessions = data.active_sessions()
+        active_id = data._acct.get("id", "A")
+
+        t = Text()
+
+        # Render every account with the same bar treatment — active first.
+        accts_ordered = sorted(
+            data.all_accounts(),
+            key=lambda a: 0 if a.get("id") == active_id else 1,
+        )
+        for acct in accts_ordered:
+            is_active = acct.get("id") == active_id
+            t.append_text(self._render_account_block(data, acct, is_active))
+
+        t.append(f"\n  P: {len(sessions)}/{max_p}\n", style="cyan")
 
         if today["by_model"]:
-            for m, toks in sorted(today["by_model"].items(), key=lambda x: -x[1])[:3]:
-                parts = m.split("-")
-                short = MODEL_SHORT.get(m, parts[1] if len(parts) > 1 else m)
+            for short, toks in _aggregate_by_model(today["by_model"])[:3]:
                 t.append(f"  {short:<10}", style="cyan")
                 t.append(f" {fmt_k(toks)}\n", style="white")
 
         if data.is_wasting():
-            t.append(f"\n  ⚠ WASTING ~{left5:.0f}%\n", style="bold yellow")
+            active_prof = data.profile_for_account(data._acct)
+            active_pct5 = active_prof["session_pct"] if active_prof else data.window_pct(5)
+            t.append(f"\n  ⚠ WASTING ~{100 - active_pct5:.0f}%\n", style="bold yellow")
         p10 = data.burn_pct_per_10min()
         t.append(f"\n  {p10:.2f}%/10m  {rate:.0f} tok/min\n", style="dim yellow")
         if mins is not None:
@@ -1475,8 +1627,7 @@ class AllocationPanel(Static):
 
     def _build(self, data: TokenData) -> Text:
         # Use real Anthropic session % for the title
-        au   = data.anthropic_usage()
-        prof = au.get("profiles", {}).get("default")
+        prof = data.active_profile()
         pct5 = prof["session_pct"] if prof else data.window_pct(5)
 
         pairs = data.session_token_share()
@@ -1556,8 +1707,7 @@ class UrgentPanel(Static):
     UrgentPanel.urgent { display: block; }
     """
     def update_urgent(self, data: TokenData):
-        au       = data.anthropic_usage()
-        prof     = au.get("profiles", {}).get("default")
+        prof     = data.active_profile()
         pct5     = prof["session_pct"] if prof else data.window_pct(5)
         rate     = data.burn_rate_per_min()
         urg_pct  = data.config.get("urgent_pct", 80)
@@ -1943,12 +2093,24 @@ class TokenBurnApp(App):
 
     def action_switch_account(self):
         accounts = self._data.all_accounts()
-        if len(accounts) <= 1:
-            self.notify("Only one account configured.\nAdd more in ~/.tokenburn.json",
-                        title="Accounts", timeout=5)
+        # Only cycle through accounts that are meaningfully switchable:
+        # live usage data, or an Anthropic account with a claude_bin.
+        def switchable(a: dict) -> bool:
+            if self._data.profile_for_account(a) is not None:
+                return True
+            if a.get("provider", "anthropic") == "anthropic" and a.get("claude_bin"):
+                return True
+            return False
+
+        ids = [a["id"] for a in accounts if switchable(a)]
+        if len(ids) <= 1:
+            skipped = [a["id"] for a in accounts if not switchable(a)]
+            msg = "Only one switchable account."
+            if skipped:
+                msg += f"\nSkipped (no tracker/launcher): {', '.join(skipped)}"
+            self.notify(msg, title="Accounts", timeout=5)
             return
-        cur  = self._data.config.get("active_account", "A")
-        ids  = [a["id"] for a in accounts]
+        cur = self._data.config.get("active_account", "A")
         next_id = ids[(ids.index(cur) + 1) % len(ids)] if cur in ids else ids[0]
         self._data.switch_account(next_id)
         self.refresh_all()

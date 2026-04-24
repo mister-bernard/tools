@@ -36,8 +36,13 @@ TASK_DIR = REAPER_DIR / "tasks"
 PENDING_DIR = REAPER_DIR / "pending-kill"
 KEEPALIVE_DIR = REAPER_DIR / "keep-alive"
 LAST_ACTIVE_DIR = REAPER_DIR / "last-active"
+PINNED_DIR = REAPER_DIR / "pinned"
 LOG_FILE = HOME / ".tokenburn-reaper.log"
 DIGEST_FILE = HOME / ".tokenburn-reaper-digest.json"
+
+# Telegram notification (best-effort, fire-and-forget)
+TG_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TG_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "39172309")
 
 # Thresholds (overridable via env)
 IDLE_HOURS = float(os.environ.get("TB_REAPER_IDLE_HOURS", "10"))
@@ -84,8 +89,50 @@ def log(msg: str) -> None:
 
 
 def ensure_dirs() -> None:
-    for d in (REAPER_DIR, TASK_DIR, PENDING_DIR, KEEPALIVE_DIR, LAST_ACTIVE_DIR):
+    for d in (REAPER_DIR, TASK_DIR, PENDING_DIR, KEEPALIVE_DIR, LAST_ACTIVE_DIR,
+              PINNED_DIR):
         d.mkdir(parents=True, exist_ok=True)
+
+
+def is_pinned(sid: str) -> bool:
+    """Return True if a pinned/<sid> sentinel exists (optionally with expiry epoch)."""
+    p = PINNED_DIR / sid
+    if not p.exists():
+        return False
+    # Optional expiry: sentinel contains unix epoch; if in the past, treat as unpinned.
+    try:
+        txt = p.read_text().strip()
+        if txt:
+            expiry = float(txt)
+            if expiry < time.time():
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+                return False
+    except (OSError, ValueError):
+        pass
+    return True
+
+
+def notify_telegram(msg: str) -> None:
+    """Best-effort Telegram ping. Silent on any failure."""
+    if not TG_BOT_TOKEN or not TG_CHAT_ID:
+        return
+    try:
+        import urllib.parse
+        import urllib.request
+        data = urllib.parse.urlencode({
+            "chat_id": TG_CHAT_ID,
+            "text": msg,
+            "parse_mode": "Markdown",
+            "disable_notification": "false",
+        }).encode()
+        url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
+        req = urllib.request.Request(url, data=data)
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception:
+        pass  # notifications must never break reaping
 
 
 def pid_alive(pid: int) -> bool:
@@ -287,6 +334,11 @@ def main() -> int:
         if rss < MIN_MEM_MB:
             continue  # small, leave it
 
+        if is_pinned(sid):
+            log(f"SKIP sid={sid[:8]} pid={pid} idle={idle_h:.1f}h rss={rss:.0f}MB "
+                f"(pinned)")
+            continue
+
         active, tool = has_active_task(sid)
         if active:
             log(f"SKIP sid={sid[:8]} pid={pid} idle={idle_h:.1f}h rss={rss:.0f}MB "
@@ -308,6 +360,15 @@ def main() -> int:
             "rss_mb": round(rss, 1),
             "outcome": outcome,
         })
+        if outcome == "killed":
+            notify_telegram(
+                f"🪦 *tb-reaper killed a session*\n"
+                f"sid `{sid[:8]}` · pid {pid}\n"
+                f"idle {idle_h:.1f}h · {rss:.0f}MB\n"
+                f"pin next time: `touch ~/.claude/reaper/pinned/{sid}`"
+            )
+        elif outcome == "aborted":
+            log(f"  session defended itself via keep-alive sentinel")
 
     log(f"reaper done: scanned={seen} acted={acted}")
     return 0
