@@ -595,6 +595,88 @@
     </div>
 
     <div class="tome">
+      <!-- Bell / chime icon -->
+      <svg class="tome-icon" width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <path d="M18 6 C13 6 10 10 10 15 L10 22 L8 25 L28 25 L26 22 L26 15 C26 10 23 6 18 6 Z" fill="none" stroke="#c9a84c" stroke-width="0.8"/>
+        <circle cx="18" cy="4" r="1.2" fill="#c9a84c"/>
+        <path d="M15 28 Q18 32 21 28" fill="none" stroke="#c9a84c" stroke-width="0.8"/>
+        <path d="M4 12 Q6 10 8 12" fill="none" stroke="#c9a84c" stroke-width="0.4" opacity="0.5"/>
+        <path d="M28 12 Q30 10 32 12" fill="none" stroke="#c9a84c" stroke-width="0.4" opacity="0.5"/>
+        <path d="M2 16 Q5 13 8 16" fill="none" stroke="#c9a84c" stroke-width="0.4" opacity="0.35"/>
+        <path d="M28 16 Q31 13 34 16" fill="none" stroke="#c9a84c" stroke-width="0.4" opacity="0.35"/>
+      </svg>
+      <div class="tome-name"><a href="https://github.com/mister-bernard/tools/tree/main/cc-notify">cc-notify</a> <span class="tome-lang">Bash</span></div>
+      <div class="tome-teaser">A bell that rings past the mountains of tmux, mosh, and SSH.</div>
+      <div class="tome-details">
+        <div class="tome-desc">Desktop notifications for Claude Code that survive the tunnels. Native OSC 9 sequences get eaten by mosh and mangled by tmux; cc-notify sidesteps the escape stack and pushes HTTP to <a href="https://ntfy.sh">ntfy.sh</a>. Your phone or browser tab gets the native notification with the session topic as the title.</div>
+        <div class="tome-tags">
+          <span>claude-code</span> <span>ntfy</span> <span>notifications</span> <span>hooks</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tome">
+      <!-- Conveyor / loop / cog icon -->
+      <svg class="tome-icon" width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <circle cx="18" cy="18" r="7" fill="none" stroke="#c9a84c" stroke-width="0.7"/>
+        <circle cx="18" cy="18" r="2.5" fill="#c9a84c" opacity="0.25" stroke="#c9a84c" stroke-width="0.5"/>
+        <path d="M18 9 L18 6 M18 30 L18 27 M9 18 L6 18 M30 18 L27 18 M11.6 11.6 L9.5 9.5 M24.4 24.4 L26.5 26.5 M11.6 24.4 L9.5 26.5 M24.4 11.6 L26.5 9.5" stroke="#c9a84c" stroke-width="0.8"/>
+        <path d="M3 33 Q10 30 18 33 Q26 36 33 33" fill="none" stroke="#c9a84c" stroke-width="0.4" opacity="0.5"/>
+      </svg>
+      <div class="tome-name"><a href="https://github.com/mister-bernard/tools/tree/main/cc-task-pipeline">cc-task-pipeline</a> <span class="tome-lang">Python</span></div>
+      <div class="tome-teaser">Reads the scroll of past sessions, drafts the next labors, and sets the patient ones to work.</div>
+      <div class="tome-details">
+        <div class="tome-desc">Autonomous task pipeline for Claude Code. Parses recent session transcripts, distills concrete follow-ups via an LLM, queues them, and executes the safe ones on its own — gated on a local token budget so it never runs away with your weekly allowance. One generator, one executor, one queue. No parallel orchestrators.</div>
+        <div class="tome-tags">
+          <span>claude-code</span> <span>automation</span> <span>transcripts</span> <span>token-budget</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tome">
+      <!-- Drone / compass icon -->
+      <svg class="tome-icon" width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <circle cx="18" cy="18" r="4" fill="none" stroke="#c9a84c" stroke-width="0.8"/>
+        <circle cx="8" cy="8" r="3" fill="none" stroke="#c9a84c" stroke-width="0.6"/>
+        <circle cx="28" cy="8" r="3" fill="none" stroke="#c9a84c" stroke-width="0.6"/>
+        <circle cx="8" cy="28" r="3" fill="none" stroke="#c9a84c" stroke-width="0.6"/>
+        <circle cx="28" cy="28" r="3" fill="none" stroke="#c9a84c" stroke-width="0.6"/>
+        <line x1="11" y1="11" x2="14.5" y2="14.5" stroke="#c9a84c" stroke-width="0.5"/>
+        <line x1="25" y1="11" x2="21.5" y2="14.5" stroke="#c9a84c" stroke-width="0.5"/>
+        <line x1="11" y1="25" x2="14.5" y2="21.5" stroke="#c9a84c" stroke-width="0.5"/>
+        <line x1="25" y1="25" x2="21.5" y2="21.5" stroke="#c9a84c" stroke-width="0.5"/>
+        <path d="M18 14 L18 22 M14 18 L22 18" stroke="#e8c95a" stroke-width="0.4"/>
+      </svg>
+      <div class="tome-name"><a href="https://github.com/mister-bernard/tools/tree/main/dji-srt-parser">dji-srt-parser</a> <span class="tome-lang">Python</span></div>
+      <div class="tome-teaser">Plucks the bird's coordinates from the chatter of its own wings.</div>
+      <div class="tome-details">
+        <div class="tome-desc">Extracts GPS telemetry from DJI drone <code>.SRT</code> subtitle files across every format variant — <code>[latitude: ...]</code>, <code>GPS(...)</code>, <code>LATITUDE: ...</code>. Takes the median fix across frames for stability and reverse-geocodes via OpenStreetMap (no API key). Handy for geolocating drone footage you forgot to tag.</div>
+        <div class="tome-tags">
+          <span>dji</span> <span>drone</span> <span>gps</span> <span>srt</span> <span>geocoding</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tome">
+      <!-- Camera / lens icon -->
+      <svg class="tome-icon" width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <rect x="4" y="10" width="28" height="20" rx="2" fill="none" stroke="#c9a84c" stroke-width="0.8"/>
+        <path d="M13 10 L15 6 L21 6 L23 10" fill="none" stroke="#c9a84c" stroke-width="0.8"/>
+        <circle cx="18" cy="20" r="6" fill="none" stroke="#c9a84c" stroke-width="0.7"/>
+        <circle cx="18" cy="20" r="3" fill="#c9a84c" opacity="0.25" stroke="#c9a84c" stroke-width="0.5"/>
+        <circle cx="27" cy="14" r="0.8" fill="#e8c95a"/>
+      </svg>
+      <div class="tome-name"><a href="https://github.com/mister-bernard/tools/tree/main/screenshot">screenshot</a> <span class="tome-lang">Node.js</span></div>
+      <div class="tome-teaser">Captures a page as it stands, without a cathedral of dependencies.</div>
+      <div class="tome-details">
+        <div class="tome-desc">CLI screenshot tool built on Playwright. Custom viewport, mobile emulation, full-page capture, wait-for-render. Sixty lines of code, one dependency, and it does the things every screenshot tool should do. No Electron app, no 200-line wrapper over 15 libraries.</div>
+        <div class="tome-tags">
+          <span>playwright</span> <span>screenshot</span> <span>png</span> <span>mobile</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tome">
       <!-- Telegraph pole / signal waves icon -->
       <svg class="tome-icon" width="36" height="36" viewBox="0 0 36 36" fill="none">
         <line x1="18" y1="4" x2="18" y2="32" stroke="#c9a84c" stroke-width="1"/>
