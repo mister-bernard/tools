@@ -42,7 +42,7 @@ DIGEST_FILE = HOME / ".tokenburn-reaper-digest.json"
 
 # Telegram notification (best-effort, fire-and-forget)
 TG_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TG_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "39172309")
+TG_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 # Thresholds (overridable via env)
 IDLE_HOURS = float(os.environ.get("TB_REAPER_IDLE_HOURS", "10"))
@@ -52,24 +52,23 @@ TASK_STALE_HOURS = float(os.environ.get("TB_REAPER_TASK_STALE_HOURS", "2"))
 DRY_RUN = os.environ.get("TB_REAPER_DRY_RUN", "0") == "1"
 
 # Overnight quiet window — reaper skips reaping during these local hours.
-# Read G's current timezone from env (set in ~/.openclaw/.env, synced to
-# systemd service via EnvironmentFile). Update G_TIMEZONE whenever G moves.
-# Format: IANA timezone name, e.g. "Europe/Berlin" or "America/Los_Angeles".
-_tz_name = os.environ.get("G_TIMEZONE", "UTC")
+# Set REAPER_TIMEZONE to your preferred IANA timezone name, e.g.
+# "Europe/Berlin" or "America/Los_Angeles". Defaults to UTC if unset/invalid.
+_tz_name = os.environ.get("REAPER_TIMEZONE", "UTC")
 try:
-    G_TZ = ZoneInfo(_tz_name)
+    LOCAL_TZ = ZoneInfo(_tz_name)
 except ZoneInfoNotFoundError:
-    G_TZ = ZoneInfo("UTC")
+    LOCAL_TZ = ZoneInfo("UTC")
 
-# Quiet window in G's local time: 23:00 → 07:00. Sessions are NOT reaped
+# Quiet window in local time: 23:00 → 07:00. Sessions are NOT reaped
 # during this window regardless of idle time — they stay alive overnight.
 OVERNIGHT_START = int(os.environ.get("TB_REAPER_OVERNIGHT_START", "23"))
 OVERNIGHT_END = int(os.environ.get("TB_REAPER_OVERNIGHT_END", "7"))
 
 
 def in_overnight_quiet_window() -> bool:
-    """Return True if G's local time is in [OVERNIGHT_START, 24) ∪ [0, OVERNIGHT_END)."""
-    local_hour = datetime.now(G_TZ).hour
+    """Return True if local time is in [OVERNIGHT_START, 24) ∪ [0, OVERNIGHT_END)."""
+    local_hour = datetime.now(LOCAL_TZ).hour
     if OVERNIGHT_START < OVERNIGHT_END:
         # e.g. 01:00–06:00
         return OVERNIGHT_START <= local_hour < OVERNIGHT_END
@@ -305,9 +304,9 @@ def main() -> int:
     now = time.time()
     idle_cutoff = now - IDLE_HOURS * 3600
 
-    local_now = datetime.now(G_TZ).strftime("%H:%M %Z")
+    local_now = datetime.now(LOCAL_TZ).strftime("%H:%M %Z")
     log(f"reaper run: idle_hours={IDLE_HOURS} min_mem_mb={MIN_MEM_MB} "
-        f"grace={GRACE_SECS}s dry_run={DRY_RUN} g_local={local_now} tz={_tz_name}")
+        f"grace={GRACE_SECS}s dry_run={DRY_RUN} local_now={local_now} tz={_tz_name}")
 
     if in_overnight_quiet_window():
         log(f"reaper skip: overnight quiet window active "

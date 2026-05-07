@@ -83,44 +83,44 @@ describe('OriginDispatcher', () => {
 
     it('plain new message — no reply context', () => {
       const out = d._buildTmuxInjection(
-        { username: 'gmacd', messageId: 42, text: 'hi there', mediaPaths: [], mediaTypes: [] },
-        { channel: 'telegram', from: 'gmacd' }
+        { username: 'testuser', messageId: 42, text: 'hi there', mediaPaths: [], mediaTypes: [] },
+        { channel: 'telegram', from: 'testuser' }
       );
-      assert.match(out, /\[telegram reply ← gmacd, msg #42\]/);
-      assert.match(out, /--- gmacd wrote: ---\nhi there$/);
+      assert.match(out, /\[telegram reply ← testuser, msg #42\]/);
+      assert.match(out, /--- testuser wrote: ---\nhi there$/);
       assert.doesNotMatch(out, /Replying to|Quoting/);
     });
 
     it('normal reply — distinct quote block', () => {
       const out = d._buildTmuxInjection(
         {
-          username: 'gmacd',
+          username: 'testuser',
           messageId: 101,
           text: 'testing a normal reply',
-          replyContext: { kind: 'reply', messageId: 25258, sender: 'Mr. Bernard', body: 'Socket fix deployed.' },
+          replyContext: { kind: 'reply', messageId: 25258, sender: 'TestSender', body: 'Socket fix deployed.' },
           mediaPaths: [], mediaTypes: [],
         },
-        { channel: 'telegram', from: 'gmacd' }
+        { channel: 'telegram', from: 'testuser' }
       );
-      assert.match(out, /--- Replying to Mr\. Bernard #25258: ---/);
+      assert.match(out, /--- Replying to TestSender #25258: ---/);
       assert.match(out, /> Socket fix deployed\./);
-      assert.match(out, /--- gmacd wrote: ---\ntesting a normal reply/);
+      assert.match(out, /--- testuser wrote: ---\ntesting a normal reply/);
       // quote block comes BEFORE new text block
-      assert.ok(out.indexOf('Replying to') < out.indexOf('gmacd wrote'));
+      assert.ok(out.indexOf('Replying to') < out.indexOf('testuser wrote'));
     });
 
     it('quote-reply uses "Quoting" verb', () => {
       const out = d._buildTmuxInjection(
         {
-          username: 'gmacd',
+          username: 'testuser',
           messageId: 102,
           text: 'nice',
-          replyContext: { kind: 'quote', messageId: 25258, sender: 'Mr. Bernard', quoteText: '.' },
+          replyContext: { kind: 'quote', messageId: 25258, sender: 'TestSender', quoteText: '.' },
           mediaPaths: [], mediaTypes: [],
         },
-        { channel: 'telegram', from: 'gmacd' }
+        { channel: 'telegram', from: 'testuser' }
       );
-      assert.match(out, /--- Quoting Mr\. Bernard #25258: ---/);
+      assert.match(out, /--- Quoting TestSender #25258: ---/);
       assert.match(out, /> \./);
     });
 
@@ -128,11 +128,11 @@ describe('OriginDispatcher', () => {
       const longBody = 'x'.repeat(800);
       const out = d._buildTmuxInjection(
         {
-          username: 'gmacd', messageId: 103, text: 'hmm',
+          username: 'testuser', messageId: 103, text: 'hmm',
           replyContext: { kind: 'reply', body: longBody },
           mediaPaths: [], mediaTypes: [],
         },
-        { from: 'gmacd' }
+        { from: 'testuser' }
       );
       assert.ok(out.includes('…'));
       assert.ok(out.length < 800);
@@ -140,8 +140,8 @@ describe('OriginDispatcher', () => {
 
     it('no context-delta/peer metadata noise', () => {
       const out = d._buildTmuxInjection(
-        { username: 'gmacd', messageId: 1, text: 'x', mediaPaths: [], mediaTypes: [] },
-        { from: 'gmacd', channel: 'telegram' }
+        { username: 'testuser', messageId: 1, text: 'x', mediaPaths: [], mediaTypes: [] },
+        { from: 'testuser', channel: 'telegram' }
       );
       assert.doesNotMatch(out, /\[peer=/);
       assert.doesNotMatch(out, /Context update/);
@@ -151,10 +151,10 @@ describe('OriginDispatcher', () => {
     it('empty text with media', () => {
       const out = d._buildTmuxInjection(
         {
-          username: 'gmacd', messageId: 1, text: '',
+          username: 'testuser', messageId: 1, text: '',
           mediaPaths: ['/tmp/p.jpg'], mediaTypes: ['photo'],
         },
-        { from: 'gmacd' }
+        { from: 'testuser' }
       );
       assert.match(out, /\(no text\)/);
       assert.match(out, /\[Photo attached: \/tmp\/p\.jpg — use Read to view\]/);

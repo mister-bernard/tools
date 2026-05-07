@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Router } from '../src/router.js';
 
 const bindings = [
-  { account: 'pv-fund', chat: 'dm',    peer: '10000001',    session: 'session-secondary' },
+  { account: 'secondary-account', chat: 'dm',    peer: '10000001',    session: 'session-secondary' },
   { account: 'default', chat: 'dm',    peer: '10000001',    session: 'session-primary' },
   { account: 'default', chat: 'group', peer: '-100000001', session: 'session-default' },
   { account: 'default', chat: 'group', peer: '*',           session: 'session-default' },
@@ -18,8 +18,8 @@ describe('Router', () => {
     assert.equal(r.session, 'session-primary');
   });
 
-  it('matches primary DM on pv-fund to session-secondary', () => {
-    const r = router.resolve('pv-fund', 'dm', '10000001', '10000001');
+  it('matches primary DM on secondary-account to session-secondary', () => {
+    const r = router.resolve('secondary-account', 'dm', '10000001', '10000001');
     assert.equal(r.session, 'session-secondary');
   });
 
@@ -43,8 +43,8 @@ describe('Router', () => {
     assert.equal(r, null);
   });
 
-  it('first match wins (pv-fund before default)', () => {
-    const r = router.resolve('pv-fund', 'dm', '10000001', '10000001');
+  it('first match wins (secondary-account before default)', () => {
+    const r = router.resolve('secondary-account', 'dm', '10000001', '10000001');
     assert.equal(r.session, 'session-secondary');
   });
 });

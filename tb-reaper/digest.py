@@ -61,8 +61,8 @@ def build_report() -> str:
 def send_telegram(text: str) -> bool:
     env = load_env(Path.home() / ".openclaw" / ".env")
     token = env.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat = env.get("G_TELEGRAM_ID") or os.environ.get("G_TELEGRAM_ID") or "39172309"
-    if not token:
+    chat = env.get("TELEGRAM_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID") or ""
+    if not token or not chat:
         return False
     try:
         subprocess.run(

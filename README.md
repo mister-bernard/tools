@@ -92,8 +92,6 @@ tools/
     hooks/
     systemd/
     README.md
-  docs/                  # redirect to mrb.sh/tools (canonical site)
-    index.html
   .github/workflows/     # CI: validate submissions, deploy pages
 ```
 
